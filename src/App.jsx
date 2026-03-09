@@ -9,6 +9,7 @@ import Register from "./pages/Register";
 import Login from "./pages/Login";
 import Admin from "./pages/admin/Admin";
 import BookingPage from "./pages/Booking";
+import PaymentSuccess from "./pages/PaymentSuccess";
 
 export default function App() {
   const location = useLocation();
@@ -29,6 +30,7 @@ export default function App() {
         <Route path="/verify-email" element={<BookingPage />} />
         <Route path="/register" element={<Register />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/payment-success" element={<PaymentSuccess />} />
 
         {/* 🔐 Trang quản trị (CHỈ ADMIN) */}
         <Route

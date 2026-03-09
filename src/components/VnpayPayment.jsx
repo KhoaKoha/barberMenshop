@@ -22,10 +22,27 @@ export default function VnpayPayment({ bookingData, onBack, onSuccess, onFailure
       return;
     }
 
+    // Ensure we have appointmentId (from state or localStorage) so vnp_TxnRef maps to Appointments.Id
+    const appointmentId = bookingData.appointmentId ?? (() => {
+      try {
+        const saved = localStorage.getItem("bookingData");
+        return saved ? JSON.parse(saved).appointmentId : undefined;
+      } catch {
+        return undefined;
+      }
+    })();
+
+    if (!appointmentId) {
+      setError("Không tìm thấy mã đặt lịch. Vui lòng quay lại bước trước và thử lại.");
+      setProcessing(false);
+      return;
+    }
+
     try {
       const response = await axios.post("http://localhost:3001/api/vnpay/create_payment_url", {
         amount: bookingData.price,
-        orderDescription: `Thanh toán cho lịch hẹn mã ${bookingData.appointmentId || "Mới"}`,
+        appointmentId,
+        orderDescription: `Thanh toán cho lịch hẹn mã ${appointmentId}`,
         orderType: "billpayment", // You can customize this
         language: "vn", // or "en"
         bankCode: bankCode,

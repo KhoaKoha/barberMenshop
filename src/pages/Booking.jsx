@@ -78,15 +78,38 @@ export default function BookingPage() {
       try {
         const parsed = JSON.parse(savedData);
         
-        // Luôn restore bookingData vào state
-        setBookingData(parsed);
-        
         // Xác định step dựa trên dữ liệu đã có
         if (parsed.customer && parsed.appointmentId) {
-          // Đã tạo booking và có appointmentId -> chuyển thẳng tới bước thanh toán
-          setCurrentStep("payment");
-          setConfirmationEmail(parsed.customer.email);
-        } else if (parsed.customer && parsed.verificationToken) {
+          // Đã tạo booking và có appointmentId -> chỉ show payment nếu chưa thanh toán
+          (async () => {
+            try {
+              const res = await axios.get("http://localhost:3001/appointments");
+              const list = res.data || [];
+              const appointment = list.find((a) => Number(a.Id) === Number(parsed.appointmentId));
+              if (appointment && (appointment.Status === "success" || appointment.status === "success")) {
+                // Đã thanh toán rồi -> xóa data cũ, cho user đặt lịch mới
+                localStorage.removeItem("bookingData");
+                localStorage.removeItem("emailToVerify");
+                localStorage.removeItem("emailVerified");
+                setBookingData(null);
+                setCurrentStep("booking");
+                return;
+              }
+              setBookingData(parsed);
+              setConfirmationEmail(parsed.customer.email);
+              setCurrentStep("payment");
+            } catch (err) {
+              console.error("Error checking appointment status:", err);
+              setBookingData(parsed);
+              setConfirmationEmail(parsed.customer.email);
+              setCurrentStep("payment");
+            }
+          })();
+          return;
+        }
+
+        setBookingData(parsed);
+        if (parsed.customer && parsed.verificationToken) {
           // Old flow với verificationToken
           setCurrentStep("verification");
           setEmailVerificationData({
