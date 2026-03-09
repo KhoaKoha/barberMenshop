@@ -1,7 +1,17 @@
+import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 
 export default function PaymentSuccess() {
   const navigate = useNavigate();
+
+  useEffect(() => {
+    // Prevent stale booking/payment state from forcing the payment step again
+    localStorage.removeItem("bookingData");
+    localStorage.removeItem("paymentData");
+    localStorage.removeItem("emailToVerify");
+    localStorage.removeItem("emailVerified");
+    localStorage.removeItem("emailVerificationToken");
+  }, []);
 
   return (
     <div className="pt-24 min-h-screen bg-black text-white flex items-center justify-center px-6">

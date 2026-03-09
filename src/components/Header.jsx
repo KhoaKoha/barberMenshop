@@ -36,7 +36,7 @@ export default function Header() {
     if (location.pathname !== "/") return;
 
     const onScroll = () => {
-      const sections = ["home", "services", "booking"];
+      const sections = ["home", "services", "appointments", "booking"];
       for (let id of sections) {
         const el = document.getElementById(id);
         if (!el) continue;
@@ -140,6 +140,14 @@ export default function Header() {
             >
               DỊCH VỤ
               <span className={underlineClass("services")} />
+            </span>
+
+            <span
+              onClick={() => goToSection("appointments")}
+              className={menuClass("appointments")}
+            >
+              LỊCH HẸN
+              <span className={underlineClass("appointments")} />
             </span>
 
             <span
