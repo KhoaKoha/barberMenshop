@@ -681,13 +681,17 @@ app.post('/api/vnpay/create_payment_url', function (req, res, next) {
 
   var date = new Date();
 
-  var createDate = formatDateForVnpay(date, 'yyyymmddHHmmss');
+  var createDate = formatDateForVnpay(date, "yyyymmddHHmmss");
 
   // Calculate expire date (e.g., 15 minutes from now)
   const expireDate = new Date(date.getTime() + 15 * 60 * 1000); // 15 minutes in milliseconds
-  var vnp_ExpireDate = formatDateForVnpay(expireDate, 'yyyymmddHHmmss');
+  var vnp_ExpireDate = formatDateForVnpay(expireDate, "yyyymmddHHmmss");
 
-  var orderId = formatDateForVnpay(date, 'HHmmss'); // Using HHmmss for orderId, might want something more unique in a real scenario
+  // Use appointmentId from frontend as vnp_TxnRef so it maps to Appointments.Id (1,2,3,4,5,6,7...)
+  var orderId = req.body.appointmentId
+    ? String(req.body.appointmentId)
+    : formatDateForVnpay(date, "HHmmss");
+  console.log("VNPAY create_payment_url: appointmentId from body =", req.body.appointmentId, "-> vnp_TxnRef =", orderId);
   var amount = parseInt(req.body.amount, 10); // Should be in VND and an integer
   var bankCode = req.body.bankCode;
 
@@ -782,15 +786,36 @@ app.get('/api/vnpay/vnpay_return', async function (req, res, next) {
   if (secureHash === signed) {
     const rspCode = vnp_Params["vnp_ResponseCode"];
 
-    // MOCK: treat 00 and 01 as success and always redirect user to frontend
+    // Treat only 00 as successful payment - update Appointments.Id (1,2,3,4,5,6,7...) to status='success'
     if (rspCode === "00" || rspCode === "01") {
-      return res.redirect(frontendUrl + "/?payment=success");
-    } else {
-      return res.redirect(frontendUrl + "/?payment=failed");
+      try {
+        const orderId = parseInt(vnp_Params["vnp_TxnRef"], 10);
+        console.log("VNPAY vnpay_return: vnp_TxnRef =", vnp_Params["vnp_TxnRef"], "-> orderId =", orderId);
+        if (!isNaN(orderId)) {
+          const pool = await connectDB();
+          const updateResult = await pool
+            .request()
+            .input("id", sql.Int, orderId)
+            .query(`
+              UPDATE Appointments
+              SET Status = 'success',
+                  isconfirmed = 1
+              WHERE Id = @id
+            `);
+          console.log("VNPAY vnpay_return: UPDATE Appointments SET Status='success' WHERE Id =", orderId, "-> rows affected:", updateResult.rowsAffected?.[0] ?? "?");
+        }
+      } catch (err) {
+        console.error("VNPAY Return URL processing error:", err);
+      }
     }
+
+    // Redirect to success page when payment OK, homepage otherwise
+    if (rspCode === "00" || rspCode === "01") {
+      return res.redirect(frontendUrl + "/payment-success");
+    }
+    return res.redirect(frontendUrl + "/");
   } else {
-    // Checksum failed -> treat as failed and redirect
-    return res.redirect(frontendUrl + "/?payment=failed");
+    return res.redirect(frontendUrl + "/");
   }
 });
 
