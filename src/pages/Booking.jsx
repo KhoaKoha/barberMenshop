@@ -15,7 +15,6 @@ export default function BookingPage() {
   const [currentStep, setCurrentStep] = useState("booking"); // 'booking', 'customer', 'emailSent', 'verification', 'payment', 'success
   const [bookingData, setBookingData] = useState(null);
   const [emailVerificationData, setEmailVerificationData] = useState(null);
-  const [confirmationEmail, setConfirmationEmail] = useState("");
   // Ref để track xem đã mount lần đầu chưa (chỉ restore khi mount lần đầu)
   const hasMountedRef = useRef(false);
 
@@ -39,9 +38,11 @@ export default function BookingPage() {
     const confirmed = searchParams.get("confirmed");
     if (confirmed === "true") {
       hasMountedRef.current = true;
-      setCurrentStep("success");
+      // Avoid synchronous setState inside effect (eslint rule)
+      queueMicrotask(() => setCurrentStep("success"));
       // Clear booking data after successful confirmation
       localStorage.removeItem("bookingData");
+      localStorage.removeItem("paymentData");
       localStorage.removeItem("emailToVerify");
       localStorage.removeItem("emailVerified");
       return;
@@ -54,10 +55,13 @@ export default function BookingPage() {
     if (token && emailParam) {
       hasMountedRef.current = true;
       // User clicked email verification link
-      setCurrentStep("verification");
-      setEmailVerificationData({
-        email: emailParam,
-        token: token,
+      // Avoid synchronous setState inside effect (eslint rule)
+      queueMicrotask(() => {
+        setCurrentStep("verification");
+        setEmailVerificationData({
+          email: emailParam,
+          token: token,
+        });
       });
       return;
     }
@@ -78,36 +82,106 @@ export default function BookingPage() {
       try {
         const parsed = JSON.parse(savedData);
         
-        // Luôn restore bookingData vào state
-        setBookingData(parsed);
-        
         // Xác định step dựa trên dữ liệu đã có
         if (parsed.customer && parsed.appointmentId) {
-          // Đã tạo booking và có appointmentId -> chuyển thẳng tới bước thanh toán
-          setCurrentStep("payment");
-          setConfirmationEmail(parsed.customer.email);
-        } else if (parsed.customer && parsed.verificationToken) {
-          // Old flow với verificationToken
-          setCurrentStep("verification");
-          setEmailVerificationData({
-            email: parsed.customer.email,
-            verificationLink: `http://localhost:5173/verify-email?token=${parsed.verificationToken}&email=${encodeURIComponent(parsed.customer.email)}`,
-            token: parsed.verificationToken,
-          });
-        } else if (parsed.customer) {
-          // Có customer nhưng chưa có appointmentId hoặc verificationToken
-          const emailVerified = localStorage.getItem("emailVerified") === "true";
-          const emailToVerify = localStorage.getItem("emailToVerify");
-          
-          if (emailVerified && emailToVerify === parsed.customer.email) {
-            setCurrentStep("payment");
-          } else {
-            setCurrentStep("customer");
-          }
-        } else if (parsed.services && parsed.date && parsed.time) {
-          // Chỉ có services/date/time (chưa có customer) - giữ ở step booking để user tiếp tục
-          setCurrentStep("booking");
+          // Đã tạo booking và có appointmentId -> chỉ show payment nếu chưa thanh toán
+          (async () => {
+            try {
+              const res = await axios.get("http://localhost:3001/appointments");
+              const list = res.data || [];
+              const appointment = list.find((a) => Number(a.Id) === Number(parsed.appointmentId));
+              const rawStatus = appointment?.Status ?? appointment?.status;
+              const normalizedStatus =
+                typeof rawStatus === "string" ? rawStatus.trim().toLowerCase() : "";
+
+              // If we can't find the appointment, don't keep stale cached flow
+              if (!appointment) {
+                localStorage.removeItem("bookingData");
+                localStorage.removeItem("paymentData");
+                localStorage.removeItem("emailToVerify");
+                localStorage.removeItem("emailVerified");
+                setBookingData(null);
+                setCurrentStep("booking");
+                return;
+              }
+
+              // Treat these statuses as already paid/finished so user can book again
+              if (["success", "paid", "completed"].includes(normalizedStatus)) {
+                // Đã thanh toán rồi -> xóa data cũ, cho user đặt lịch mới
+                localStorage.removeItem("bookingData");
+                localStorage.removeItem("paymentData");
+                localStorage.removeItem("emailToVerify");
+                localStorage.removeItem("emailVerified");
+                setBookingData(null);
+                setCurrentStep("booking");
+                return;
+              }
+
+              // NEW: If payment is still pending, start a fresh booking (do not restore old payment page)
+              if (normalizedStatus === "pending") {
+                localStorage.removeItem("bookingData");
+                localStorage.removeItem("paymentData");
+                localStorage.removeItem("emailToVerify");
+                localStorage.removeItem("emailVerified");
+                setBookingData(null);
+                setCurrentStep("booking");
+                return;
+              }
+              setBookingData(parsed);
+              setCurrentStep("payment");
+            } catch (err) {
+              console.error("Error checking appointment status:", err);
+              // If we can't verify status, prefer starting fresh instead of forcing user back to payment
+              localStorage.removeItem("bookingData");
+              localStorage.removeItem("paymentData");
+              localStorage.removeItem("emailToVerify");
+              localStorage.removeItem("emailVerified");
+              setBookingData(null);
+              setCurrentStep("booking");
+            }
+          })();
+          return;
         }
+
+        // Avoid synchronous setState inside effect (eslint rule)
+        const next = (() => {
+          if (parsed.customer && parsed.verificationToken) {
+            return {
+              step: "verification",
+              emailVerificationData: {
+                email: parsed.customer.email,
+                verificationLink: `http://localhost:5173/verify-email?token=${parsed.verificationToken}&email=${encodeURIComponent(
+                  parsed.customer.email
+                )}`,
+                token: parsed.verificationToken,
+              },
+            };
+          }
+
+          if (parsed.customer) {
+            const emailVerified = localStorage.getItem("emailVerified") === "true";
+            const emailToVerify = localStorage.getItem("emailToVerify");
+            return {
+              step: emailVerified && emailToVerify === parsed.customer.email ? "payment" : "customer",
+            };
+          }
+
+          if (parsed.services && parsed.date && parsed.time) {
+            return { step: "booking" };
+          }
+
+          return {};
+        })();
+
+        queueMicrotask(() => {
+          setBookingData(parsed);
+          if (next.emailVerificationData) {
+            setEmailVerificationData(next.emailVerificationData);
+          }
+          if (next.step) {
+            setCurrentStep(next.step);
+          }
+        });
         // Nếu không có dữ liệu hợp lệ, giữ nguyên step mặc định "booking"
       } catch (err) {
         console.error("Error parsing booking data:", err);
@@ -150,7 +224,7 @@ export default function BookingPage() {
     setCurrentStep("booking");
   };
 
-  const handleEmailSent = (data) => {
+  const handleEmailSent = () => {
     // Sau khi submit thông tin khách hàng, cập nhật bookingData từ localStorage
     const savedData = localStorage.getItem("bookingData");
     if (savedData) {
@@ -163,7 +237,6 @@ export default function BookingPage() {
     }
 
     // Lưu email để hiển thị nếu cần và chuyển sang bước thanh toán (VNPAY)
-    setConfirmationEmail(data.email);
     setCurrentStep("payment");
   };
 
@@ -200,7 +273,6 @@ export default function BookingPage() {
         if (parsed.customer && parsed.customer.email) {
           // For logged-in users, we may not have fullName and phone
           // Use empty strings or get from localStorage if available
-          const isLoggedIn = localStorage.getItem("isLogin") === "true";
           const email = parsed.customer.email;
           const fullName = parsed.customer.fullName || "";
           const phone = parsed.customer.phone || "";

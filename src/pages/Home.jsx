@@ -2,6 +2,7 @@ import { useNavigate } from "react-router-dom";
 import Hero from "../components/Hero";
 import Services from "../components/Services";
 import Booking from "../components/Booking";
+import MyAppointments from "../components/MyAppointments";
 
 export default function Home() {
   const navigate = useNavigate();
@@ -14,6 +15,10 @@ export default function Home() {
 
       <section id="services">
         <Services />
+      </section>
+
+      <section id="appointments">
+        <MyAppointments />
       </section>
 
       <section id="booking">

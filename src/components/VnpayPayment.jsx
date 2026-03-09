@@ -4,6 +4,7 @@ import axios from "axios";
 export default function VnpayPayment({ bookingData, onBack, onSuccess, onFailure }) {
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState(null);
+  const [bankCode, setBankCode] = useState("");
 
   const handleVnpayPayment = async () => {
     setProcessing(true);
@@ -15,12 +16,36 @@ export default function VnpayPayment({ bookingData, onBack, onSuccess, onFailure
       return;
     }
 
+    if (!bankCode) {
+      setError("Vui lòng chọn phương thức thanh toán / ngân hàng.");
+      setProcessing(false);
+      return;
+    }
+
+    // Ensure we have appointmentId (from state or localStorage) so vnp_TxnRef maps to Appointments.Id
+    const appointmentId = bookingData.appointmentId ?? (() => {
+      try {
+        const saved = localStorage.getItem("bookingData");
+        return saved ? JSON.parse(saved).appointmentId : undefined;
+      } catch {
+        return undefined;
+      }
+    })();
+
+    if (!appointmentId) {
+      setError("Không tìm thấy mã đặt lịch. Vui lòng quay lại bước trước và thử lại.");
+      setProcessing(false);
+      return;
+    }
+
     try {
       const response = await axios.post("http://localhost:3001/api/vnpay/create_payment_url", {
         amount: bookingData.price,
-        orderDescription: `Thanh toán cho lịch hẹn mã ${bookingData.appointmentId || "Mới"}`,
+        appointmentId,
+        orderDescription: `Thanh toán cho lịch hẹn mã ${appointmentId}`,
         orderType: "billpayment", // You can customize this
         language: "vn", // or "en"
+        bankCode: bankCode,
       });
 
       if (response.data && response.data.vnpUrl) {
@@ -94,9 +119,67 @@ export default function VnpayPayment({ bookingData, onBack, onSuccess, onFailure
           </div>
         </div>
 
+        {/* Chọn phương thức / ngân hàng thanh toán */}
+        <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-8 mb-6">
+          <h3 className="text-xl font-semibold mb-4">Chọn phương thức thanh toán</h3>
+          <div className="space-y-3">
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="radio"
+                name="bankCode"
+                value="VNPAYQR"
+                checked={bankCode === "VNPAYQR"}
+                onChange={(e) => setBankCode(e.target.value)}
+                className="w-4 h-4 text-[#d4a441]"
+              />
+              <div>
+                <p className="font-medium">Quét mã QR (VNPAYQR)</p>
+                <p className="text-sm text-gray-400">
+                  Thanh toán bằng ứng dụng ngân hàng / ví điện tử hỗ trợ VNPAYQR.
+                </p>
+              </div>
+            </label>
+
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="radio"
+                name="bankCode"
+                value="VNBANK"
+                checked={bankCode === "VNBANK"}
+                onChange={(e) => setBankCode(e.target.value)}
+                className="w-4 h-4 text-[#d4a441]"
+              />
+              <div>
+                <p className="font-medium">Thẻ ATM / Tài khoản nội địa (VNBANK)</p>
+                <p className="text-sm text-gray-400">
+                  Thanh toán bằng thẻ ATM hoặc tài khoản ngân hàng nội địa.
+                </p>
+              </div>
+            </label>
+
+            <label className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="radio"
+                name="bankCode"
+                value="INTCARD"
+                checked={bankCode === "INTCARD"}
+                onChange={(e) => setBankCode(e.target.value)}
+                className="w-4 h-4 text-[#d4a441]"
+              />
+              <div>
+                <p className="font-medium">Thẻ quốc tế (INTCARD)</p>
+                <p className="text-sm text-gray-400">
+                  Thanh toán bằng thẻ Visa, Mastercard, JCB, American Express.
+                </p>
+              </div>
+            </label>
+          </div>
+        </div>
+
         {error && (
-          <p className="text-red-500 text-center mt-4">{error}</p>
+          <p className="text-red-500 text-center mt-2">{error}</p>
         )}
+
         {/* Action Buttons */}
         <div className="flex gap-4 mt-8">
           <button

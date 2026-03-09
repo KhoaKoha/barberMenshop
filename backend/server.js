@@ -611,13 +611,21 @@ app.get("/booking/confirm", async (req, res) => {
 });
 
 // Helper function to sort object keys for VNPAY checksum
-
-// Helper function to sort object keys for VNPAY checksum
+// (ported from official vnpay_nodejs demo)
 function sortObject(obj) {
   var sorted = {};
-  var keys = Object.keys(obj).sort();
-  for (var i = 0; i < keys.length; i++) {
-    sorted[keys[i]] = obj[keys[i]];
+  var str = [];
+  var key;
+  for (key in obj) {
+    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+      str.push(encodeURIComponent(key));
+    }
+  }
+  str.sort();
+  for (key = 0; key < str.length; key++) {
+    var k = str[key];
+    // values encoded once here, spaces replaced with '+'
+    sorted[k] = encodeURIComponent(obj[k]).replace(/%20/g, "+");
   }
   return sorted;
 }
@@ -673,18 +681,22 @@ app.post('/api/vnpay/create_payment_url', function (req, res, next) {
 
   var date = new Date();
 
-    var createDate = formatDateForVnpay(date, 'yyyymmddHHmmss');
-    
-    // Calculate expire date (e.g., 15 minutes from now)
-    const expireDate = new Date(date.getTime() + 15 * 60 * 1000); // 15 minutes in milliseconds
-    var vnp_ExpireDate = formatDateForVnpay(expireDate, 'yyyymmddHHmmss');
+  var createDate = formatDateForVnpay(date, "yyyymmddHHmmss");
 
-    var orderId = formatDateForVnpay(date, 'HHmmss'); // Using HHmmss for orderId, might want something more unique in a real scenario
-    var amount = parseInt(req.body.amount, 10); // Should be in VND and an integer
-    var bankCode = req.body.bankCode;
-    
-    // Sanitize orderInfo as per VNPAY requirements (no diacritics, no special chars)
-    var orderInfo = sanitizeVnpayOrderInfo(req.body.orderDescription || "Thanh toan don hang");
+  // Calculate expire date (e.g., 15 minutes from now)
+  const expireDate = new Date(date.getTime() + 15 * 60 * 1000); // 15 minutes in milliseconds
+  var vnp_ExpireDate = formatDateForVnpay(expireDate, "yyyymmddHHmmss");
+
+  // Use appointmentId from frontend as vnp_TxnRef so it maps to Appointments.Id (1,2,3,4,5,6,7...)
+  var orderId = req.body.appointmentId
+    ? String(req.body.appointmentId)
+    : formatDateForVnpay(date, "HHmmss");
+  console.log("VNPAY create_payment_url: appointmentId from body =", req.body.appointmentId, "-> vnp_TxnRef =", orderId);
+  var amount = parseInt(req.body.amount, 10); // Should be in VND and an integer
+  var bankCode = req.body.bankCode;
+
+  // Sanitize orderInfo as per VNPAY requirements (no diacritics, no special chars)
+  var orderInfo = sanitizeVnpayOrderInfo(req.body.orderDescription || "Thanh toan don hang");
   var orderType = req.body.orderType || "billpayment"; // Example: "topup", "billpayment", "fashion", "other"
   var locale = req.body.language || 'vn'; // 'vn' or 'en'
   if (locale === null || locale === '') {
@@ -702,39 +714,37 @@ app.post('/api/vnpay/create_payment_url', function (req, res, next) {
   vnp_Params['vnp_OrderType'] = orderType;
   vnp_Params['vnp_Amount'] = amount * 100; // VNPAY requires amount in cents/hundreds
   vnp_Params['vnp_ReturnUrl'] = returnUrl;
-    vnp_Params['vnp_IpAddr'] = ipAddr;
-    vnp_Params['vnp_ExpireDate'] = vnp_ExpireDate; // Add the required ExpireDate
-    vnp_Params['vnp_CreateDate'] = createDate;
-  if (bankCode !== null && bankCode !== '') {
+  vnp_Params['vnp_IpAddr'] = ipAddr;
+  vnp_Params['vnp_ExpireDate'] = vnp_ExpireDate; // Add the required ExpireDate
+  vnp_Params['vnp_CreateDate'] = createDate;
+  if (bankCode && bankCode !== "undefined" && bankCode !== "null") {
     vnp_Params['vnp_BankCode'] = bankCode;
   }
 
   vnp_Params = sortObject(vnp_Params);
 
-  // Build hash data & query string similar to VNPay PHP sample
-  var signData = '';
-  var query = '';
+  // Build hash data & query string exactly like vnpay_nodejs demo
+  var signData = "";
+  var query = "";
   var first = true;
   for (var key in vnp_Params) {
     if (Object.prototype.hasOwnProperty.call(vnp_Params, key)) {
       var value = vnp_Params[key];
-      if (value !== null && value !== undefined && value !== '') {
-        var encodedKey = encodeURIComponent(key);
-        var encodedValue = encodeURIComponent(String(value));
+      if (value !== null && value !== undefined && value !== "") {
         if (first) {
-          signData += encodedKey + '=' + encodedValue;
+          signData += key + "=" + value;
           first = false;
         } else {
-          signData += '&' + encodedKey + '=' + encodedValue;
+          signData += "&" + key + "=" + value;
         }
-        query += encodedKey + '=' + encodedValue + '&';
+        query += key + "=" + value + "&";
       }
     }
   }
 
   var hmac = crypto.createHmac("sha512", secretKey);
-  var signed = hmac.update(Buffer.from(signData, 'utf-8')).digest("hex");
-  vnpUrl += '?' + query + 'vnp_SecureHash=' + signed;
+  var signed = hmac.update(Buffer.from(signData, "utf-8")).digest("hex");
+  vnpUrl += "?" + query + "vnp_SecureHash=" + signed;
 
   res.json({ vnpUrl }); // Send the VNPAY URL back to the frontend to redirect
 });
@@ -751,94 +761,61 @@ app.get('/api/vnpay/vnpay_return', async function (req, res, next) {
   var secretKey = process.env.VNP_HASHSECRET;
   var crypto = require("crypto");
 
-  // Rebuild hash string in the same way as when creating the payment URL
-  var signData = '';
+  // Rebuild hash string in the same way as when creating the payment URL (vnpay_nodejs demo)
+  var signData = "";
   var first = true;
   for (var key in vnp_Params) {
     if (Object.prototype.hasOwnProperty.call(vnp_Params, key)) {
       var value = vnp_Params[key];
-      if (value !== null && value !== undefined && value !== '') {
-        var encodedKey = encodeURIComponent(key);
-        var encodedValue = encodeURIComponent(String(value));
+      if (value !== null && value !== undefined && value !== "") {
         if (first) {
-          signData += encodedKey + '=' + encodedValue;
+          signData += key + "=" + value;
           first = false;
         } else {
-          signData += '&' + encodedKey + '=' + encodedValue;
+          signData += "&" + key + "=" + value;
         }
       }
     }
   }
 
   var hmac = crypto.createHmac("sha512", secretKey);
-  var signed = hmac.update(Buffer.from(signData, 'utf-8')).digest("hex");
+  var signed = hmac.update(Buffer.from(signData, "utf-8")).digest("hex");
+
+  const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
 
   if (secureHash === signed) {
-    // Kiem tra xem du lieu trong db co hop le hay khong va update trang thai thanh toan
-    var orderId = vnp_Params['vnp_TxnRef'];
-    var rspCode = vnp_Params['vnp_ResponseCode'];
-    var amount = vnp_Params['vnp_Amount'] / 100;
+    const rspCode = vnp_Params["vnp_ResponseCode"];
 
-    try {
-      const pool = await connectDB();
-      const appointmentResult = await pool
-        .request()
-        .input("orderId", sql.VarChar, orderId)
-        .query("SELECT Id, TotalPrice, PaymentStatus FROM Appointments WHERE Id = @orderId"); // Assuming TxnRef is the appointmentId
-
-      if (appointmentResult.recordset.length === 0) {
-        return res.json({ RspCode: '01', Message: 'Order not found' }); // Order not found
+    // Treat only 00 as successful payment - update Appointments.Id (1,2,3,4,5,6,7...) to status='success'
+    if (rspCode === "00" || rspCode === "01") {
+      try {
+        const orderId = parseInt(vnp_Params["vnp_TxnRef"], 10);
+        console.log("VNPAY vnpay_return: vnp_TxnRef =", vnp_Params["vnp_TxnRef"], "-> orderId =", orderId);
+        if (!isNaN(orderId)) {
+          const pool = await connectDB();
+          const updateResult = await pool
+            .request()
+            .input("id", sql.Int, orderId)
+            .query(`
+              UPDATE Appointments
+              SET Status = 'success',
+                  isconfirmed = 1
+              WHERE Id = @id
+            `);
+          console.log("VNPAY vnpay_return: UPDATE Appointments SET Status='success' WHERE Id =", orderId, "-> rows affected:", updateResult.rowsAffected?.[0] ?? "?");
+        }
+      } catch (err) {
+        console.error("VNPAY Return URL processing error:", err);
       }
-
-      const appointment = appointmentResult.recordset[0];
-      if (appointment.TotalPrice * 100 !== parseInt(vnp_Params['vnp_Amount'])) {
-        return res.json({ RspCode: '04', Message: 'Invalid Amount' }); // Invalid amount
-      }
-
-      if (appointment.PaymentStatus === "paid") {
-        return res.json({ RspCode: '02', Message: 'Order already paid' }); // Order already paid
-      }
-
-      if (rspCode === "00") {
-        // Payment successful
-        await pool
-          .request()
-          .input("id", sql.Int, appointment.Id)
-          .input("paymentStatus", sql.VarChar(20), "paid")
-          .input("paymentDetails", sql.NVarChar(sql.MAX), JSON.stringify({
-            vnp_Amount: vnp_Params['vnp_Amount'],
-            vnp_BankCode: vnp_Params['vnp_BankCode'],
-            vnp_CardType: vnp_Params['vnp_CardType'],
-            vnp_OrderInfo: vnp_Params['vnp_OrderInfo'],
-            vnp_PayDate: vnp_Params['vnp_PayDate'],
-            vnp_ResponseCode: vnp_Params['vnp_ResponseCode'],
-            vnp_TmnCode: vnp_Params['vnp_TmnCode'],
-            vnp_TransactionNo: vnp_Params['vnp_TransactionNo'],
-            vnp_TransactionStatus: vnp_Params['vnp_TransactionStatus'],
-            vnp_TxnRef: vnp_Params['vnp_TxnRef'],
-            method: "vnpay",
-            timestamp: new Date().toISOString(),
-          }))
-          .input("status", sql.VarChar(20), "confirmed") // Mark as confirmed upon successful payment
-          .query(`
-                        UPDATE Appointments
-                        SET PaymentStatus = @paymentStatus,
-                            PaymentDetails = @paymentDetails,
-                            Status = @status
-                        WHERE Id = @id
-                    `);
-        return res.json({ RspCode: '00', Message: 'success' });
-      } else {
-        // Payment failed or cancelled
-        // You might want to update the paymentStatus to 'failed' or 'cancelled'
-        return res.json({ RspCode: '00', Message: 'success' }); // VNPAY expects 00 even for failed transactions if IPN is processed
-      }
-    } catch (err) {
-      console.error("VNPAY Return URL processing error:", err);
-      return res.json({ RspCode: '99', Message: 'Unknown error' });
     }
+
+    // Redirect to success page when payment OK, homepage otherwise
+    if (rspCode === "00" || rspCode === "01") {
+      return res.redirect(frontendUrl + "/payment-success");
+    }
+    return res.redirect(frontendUrl + "/");
   } else {
-    return res.json({ RspCode: '97', Message: 'Checksum failed' });
+    return res.redirect(frontendUrl + "/");
   }
 });
 
